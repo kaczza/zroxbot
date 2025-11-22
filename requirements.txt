@@ -1,6 +1,7 @@
-asyncio==3.4.3
+aiohttp
 py-cord==2.4.0
 pytz
 datetime
 chat-exporter
 python-dotenv
+
