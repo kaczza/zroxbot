@@ -9,6 +9,7 @@ from cogs.welcome_system import WelcomeSystem
 from cogs.clear_channel import ClearChannel
 from cogs.auto_role import AutoRole
 from cogs.announcement import Announcement
+from cogs.config import *
 
 with open("config.json", "r") as config_file:
     settings = json.load(config_file)
