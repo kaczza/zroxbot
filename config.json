@@ -1,0 +1,24 @@
+{
+  "token": "",
+  "guild_id": 1408587746213236808,
+  "welcome_channel_id": 1408587746779598856,
+  "ticket_channel_id": 1441861458790060224,
+  "category_id_1": 1441862501460348958,
+  "category_id_2": 1441862501460348958,
+  "admin_role_id": 1408587746213236813, 
+  "support_team_role_id": 1408587746213236812,
+  "log_channel_id": 1408587747190509726,
+  "timezone": "CET",
+  "embed_title": "Support-Tickets",
+  "embed_description": "Here you can open a Support Ticket!",
+  "anti_caps_enabled": true,
+  "min_message_length": 10,
+  "anti_links_enabled": true,
+  "allowed_links_channels": [1408592016924868721,1408587746779598854],
+  "allowed_domains": ["youtube.com", "github.com"],
+  "auto_role_enabled": true,
+  "auto_role_id": 1408587746213236809,
+  "owner_role_id": 1408587746213236813,
+  "announce_channel_id": 1408592016924868721
+
+}

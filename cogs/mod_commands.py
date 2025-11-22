@@ -1,0 +1,312 @@
+import discord
+from discord.ext import commands
+from discord.commands import Option
+import json
+import datetime
+import re
+
+with open("config.json", mode="r") as config_file:
+    config = json.load(config_file)
+
+TEAM_ROLE = config["admin_role_id"]
+LOG_CHANNEL = config["log_channel_id"]
+
+ANTI_CAPS_ENABLED = config.get("anti_caps_enabled", False)
+CAPS_PERCENTAGE = config.get("caps_percentage", 80)
+MIN_MESSAGE_LENGTH = config.get("min_message_length", 10)
+ANTI_LINKS_ENABLED = config.get("anti_links_enabled", False)
+ALLOWED_LINKS_CHANNELS = config.get("allowed_links_channels", [])
+ALLOWED_DOMAINS = config.get("allowed_domains", ["discord.com", "discord.gg"])
+
+class ModCommands(commands.Cog):
+
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        print(f'ModCommands cog loaded successfully')
+        print(f'Anti-caps: {ANTI_CAPS_ENABLED}, Anti-links: {ANTI_LINKS_ENABLED}')
+
+    def has_team_role():
+        async def predicate(ctx):
+            if ctx.author.guild_permissions.administrator:
+                return True
+            team_role = ctx.guild.get_role(TEAM_ROLE)
+            return team_role in ctx.author.roles
+        return commands.check(predicate)
+    async def is_excessive_caps(self, text):
+        """Ellenőrzi, hogy az üzenet túl sok nagybetűt tartalmaz-e"""
+        text = re.sub(r'http\S+', '', text)
+        text = re.sub(r'`[^`]*`', '', text)
+        text = re.sub(r'\*\*[^*]*\*\*', '', text)
+        text = re.sub(r'\*[^*]*\*', '', text)
+        
+        letters = [char for char in text if char.isalpha()]
+        
+        if len(letters) < MIN_MESSAGE_LENGTH:
+            return False
+        
+        if not letters:
+            return False
+        
+        upper_count = sum(1 for char in letters if char.isupper())
+        caps_percentage = (upper_count / len(letters)) * 100
+        
+        return caps_percentage >= CAPS_PERCENTAGE
+    async def contains_links(self, text):
+        for domain in ALLOWED_DOMAINS:
+            text = re.sub(rf'https?://(?:www\.)?{re.escape(domain)}/\S+', '', text)
+        
+        link_pattern = r'https?://\S+'
+        return bool(re.search(link_pattern, text))
+
+    async def send_auto_mod_dm(self, member, reason, original_message):
+        """Privát üzenet küldése automod esetén"""
+        try:
+            embed = discord.Embed(
+                title="⚠️ Message Deleted",
+                description=f"Your message was deleted because: {reason}",
+                color=discord.Colour.orange()
+            )
+            embed.add_field(
+                name="Original Message",
+                value=f"```{original_message[:100]}{'...' if len(original_message) > 100 else ''}```",
+                inline=False
+            )
+            await member.send(embed=embed)
+            return True
+        except discord.Forbidden:
+            return False
+        except Exception as e:
+            print(f"Error sending automod DM: {e}")
+            return False
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        if message.author.bot:
+            return
+        
+        # Admin role ellenőrzése
+        team_role = message.guild.get_role(TEAM_ROLE) if message.guild else None
+        has_admin_role = team_role in message.author.roles if team_role else False
+        
+        if message.author.guild_permissions.administrator or has_admin_role:
+            return  
+        if ANTI_CAPS_ENABLED:
+            if await self.is_excessive_caps(message.content):
+                try:
+                    await message.delete()
+                    await self.send_auto_mod_dm(
+                        message.author, 
+                        "it contained excessive capitalization", 
+                        message.content
+                    )
+                    return
+                except Exception as e:
+                    print(f"Error in anti-caps: {e}")
+
+        if ANTI_LINKS_ENABLED:
+            if message.channel.id not in ALLOWED_LINKS_CHANNELS:
+                if await self.contains_links(message.content):
+                    try:
+                        await message.delete()
+                        await self.send_auto_mod_dm(
+                            message.author, 
+                            "links are not allowed in this channel", 
+                            message.content
+                        )
+                        return
+                    except Exception as e:
+                        print(f"Error in anti-links: {e}")
+
+    async def send_log(self, action: str, member: discord.Member, moderator: discord.Member, reason: str):
+        log_channel = self.bot.get_channel(LOG_CHANNEL)
+        if not log_channel:
+            return
+
+        embed = discord.Embed(
+            title=f"🔨 {action}",
+            color=discord.Colour.red() if action == "Ban" else discord.Colour.orange(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        
+        embed.add_field(name="User", value=f"{member.mention} ({member.id})", inline=True)
+        embed.add_field(name="Moderator", value=f"{moderator.mention}", inline=True)
+        embed.add_field(name="Reason", value=reason, inline=False)
+        embed.add_field(name="Account Created", value=f"<t:{int(member.created_at.timestamp())}:R>", inline=True)
+        
+        if member.joined_at:
+            embed.add_field(name="Joined Server", value=f"<t:{int(member.joined_at.timestamp())}:R>", inline=True)
+        
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"User ID: {member.id}")
+
+        await log_channel.send(embed=embed)
+
+    async def send_pm_to_user(self, member: discord.Member, action: str, reason: str, moderator: discord.Member):
+        try:
+            embed = discord.Embed(
+                title=f"🔨 You have been {action.lower()}ed",
+                color=discord.Colour.red(),
+                timestamp=datetime.datetime.utcnow()
+            )
+            
+            embed.add_field(name="Server", value=member.guild.name, inline=True)
+            embed.add_field(name="Moderator", value=f"{moderator.display_name}", inline=True)
+            embed.add_field(name="Reason", value=reason, inline=False)
+            embed.add_field(name="Date", value=f"<t:{int(datetime.datetime.utcnow().timestamp())}:F>", inline=True)
+            
+            if action == "Ban":
+                embed.add_field(name="Appeal", value="If you believe this was a mistake, contact the server staff.", inline=False)
+            
+            embed.set_footer(text=f"Server: {member.guild.name}")
+
+            await member.send(embed=embed)
+            return True
+        except discord.Forbidden:
+            return False
+        except Exception as e:
+            print(f"Error sending PM: {e}")
+            return False
+
+    @commands.slash_command(name="kick", description="Kick a member from the server")
+    @commands.guild_only()
+    @commands.check_any(commands.has_permissions(administrator=True), has_team_role())
+    async def kick(self, ctx, 
+                  member: Option(discord.Member, description="Member to kick", required=True),
+                  reason: Option(str, description="Reason for kick", required=False, default="No reason provided")):
+        
+        if member == ctx.author:
+            embed = discord.Embed(description="You cannot kick yourself", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+            return
+
+        if member == self.bot.user:
+            embed = discord.Embed(description="I cannot kick myself", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+            return
+
+        if member.guild_permissions.administrator:
+            embed = discord.Embed(description="Cannot kick administrators", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+            return
+
+        try:
+            pm_sent = await self.send_pm_to_user(member, "Kick", reason, ctx.author)
+            
+            await member.kick(reason=f"{reason} | Kicked by {ctx.author}")
+            
+            await self.send_log("Kick", member, ctx.author, reason)
+            
+            embed = discord.Embed(
+                description=f"✅ {member.mention} has been kicked\n**Reason:** {reason}",
+                color=discord.colour.Color.green()
+            )
+            if not pm_sent:
+                embed.add_field(name="Note", value="Could not send DM to user", inline=False)
+                
+            await ctx.respond(embed=embed)
+            
+        except discord.Forbidden:
+            embed = discord.Embed(description="I don't have permission to kick that member", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+        except Exception as e:
+            embed = discord.Embed(description=f"An error occurred while trying to kick the member: {str(e)}", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+
+    @commands.slash_command(name="ban", description="Ban a member from the server")
+    @commands.guild_only()
+    @commands.check_any(commands.has_permissions(administrator=True), has_team_role())
+    async def ban(self, ctx, 
+                 member: Option(discord.Member, description="Member to ban", required=True),
+                 reason: Option(str, description="Reason for ban", required=False, default="No reason provided"),
+                 delete_days: Option(int, description="Delete message history (days)", required=False, default=0, choices=[0, 1, 7])):
+        
+        if member == ctx.author:
+            embed = discord.Embed(description="You cannot ban yourself", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+            return
+
+        if member == self.bot.user:
+            embed = discord.Embed(description="I cannot ban myself", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+            return
+
+        if member.guild_permissions.administrator:
+            embed = discord.Embed(description="Cannot ban administrators", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+            return
+
+        try:
+            pm_sent = await self.send_pm_to_user(member, "Ban", reason, ctx.author)
+            
+            delete_seconds = delete_days * 24 * 60 * 60
+            await member.ban(
+                reason=f"{reason} | Banned by {ctx.author}", 
+                delete_message_seconds=delete_seconds
+            )
+            
+            await self.send_log("Ban", member, ctx.author, reason)
+            
+            embed = discord.Embed(
+                description=f"✅ {member.mention} has been banned\n**Reason:** {reason}",
+                color=discord.colour.Color.green()
+            )
+            if delete_days > 0:
+                embed.add_field(name="Messages Deleted", value=f"{delete_days} day(s) of message history", inline=False)
+            if not pm_sent:
+                embed.add_field(name="Note", value="Could not send DM to user", inline=False)
+                
+            await ctx.respond(embed=embed)
+            
+        except discord.Forbidden:
+            embed = discord.Embed(description="I don't have permission to ban that member", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+        except Exception as e:
+            embed = discord.Embed(description=f"An error occurred while trying to ban the member: {str(e)}", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+
+    @commands.slash_command(name="unban", description="Unban a user from the server")
+    @commands.guild_only()
+    @commands.check_any(commands.has_permissions(administrator=True), has_team_role())
+    async def unban(self, ctx,
+                   user_id: Option(str, description="User ID to unban", required=True),
+                   reason: Option(str, description="Reason for unban", required=False, default="No reason provided")):
+        
+        try:
+            user_id = int(user_id)
+            user = await self.bot.fetch_user(user_id)
+            
+            await ctx.guild.unban(user, reason=f"{reason} | Unbanned by {ctx.author}")
+            
+            log_channel = self.bot.get_channel(LOG_CHANNEL)
+            if log_channel:
+                embed = discord.Embed(
+                    title="🔓 Unban",
+                    color=discord.Colour.green(),
+                    timestamp=datetime.datetime.utcnow()
+                )
+                embed.add_field(name="User", value=f"{user.mention} ({user.id})", inline=True)
+                embed.add_field(name="Moderator", value=f"{ctx.author.mention}", inline=True)
+                embed.add_field(name="Reason", value=reason, inline=False)
+                await log_channel.send(embed=embed)
+            
+            embed = discord.Embed(
+                description=f"✅ {user.mention} has been unbanned\n**Reason:** {reason}",
+                color=discord.colour.Color.green()
+            )
+            await ctx.respond(embed=embed)
+            
+        except ValueError:
+            embed = discord.Embed(description="Please provide a valid user ID", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+        except discord.NotFound:
+            embed = discord.Embed(description="User is not banned or user ID is invalid", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+        except discord.Forbidden:
+            embed = discord.Embed(description="I don't have permission to unban that user", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
+        except Exception as e:
+            embed = discord.Embed(description=f"An error occurred: {str(e)}", color=discord.colour.Color.red())
+            await ctx.respond(embed=embed, ephemeral=True)
