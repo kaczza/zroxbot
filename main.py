@@ -9,7 +9,6 @@ from cogs.welcome_system import WelcomeSystem
 from cogs.clear_channel import ClearChannel
 from cogs.auto_role import AutoRole
 from cogs.announcement import Announcement
-from cogs.config import *
 
 with open("config.json", "r") as config_file:
     settings = json.load(config_file)
@@ -19,7 +18,7 @@ SERVER_ID = settings["guild_id"]
 TICKET_CATEGORY_1 = settings["category_id_1"]
 TICKET_CATEGORY_2 = settings["category_id_2"]
 
-client = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+client = commands.Bot(intents=discord.Intents.all())
 
 @client.event
 async def on_ready():
