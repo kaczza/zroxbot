@@ -116,4 +116,3 @@ MIT © [kaczza](https://github.com/kaczza/zroxbot/blob/main/LICENSE) – feel fr
 Documentation Comming soon!
 [Issue Tracker](https://github.com/kaczza/zroxbot/issues) •  
 [Discord Support](https://discord.gg/UTxb2Dk9jQ)
-```
