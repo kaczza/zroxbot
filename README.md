@@ -26,7 +26,7 @@
 ## 🚀 Quick Start
 1. Clone & enter the repo
    ```bash
-   git clone https://github.com/your-username/zrox.git && cd zrox
+   git clone https://github.com/kaczza/zroxbot.git && cd zrox
    ```
 2. Install dependencies
    ```bash
